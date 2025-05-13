@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from cityscapes_dataset import CityscapesDataset
+from dataset_cityscapes import CityscapesDataset
 
 label_map = {
     (128, 64,128): 0,  # road

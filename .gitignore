@@ -1,2 +1,6 @@
 .vscode/
 *.pyc
+data/
+*.tar.gz
+*.pth
+mlruns/
