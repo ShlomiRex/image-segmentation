@@ -1,3 +1,4 @@
+import mlflow.data.dataset
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -29,7 +30,7 @@ MODEL_PATH = "unet_oxford_pet.pth"
 print(f"Using device: {DEVICE}")
 
 mlflow.set_experiment("UNet-Oxford-Pet")  # Creates one if doesn't exist
-mlflow.pytorch.autolog()
+# mlflow.pytorch.autolog()
 mlflow.enable_system_metrics_logging()
 
 # -------------------------------
@@ -174,16 +175,36 @@ def log_system_metrics(epoch):
         mlflow.log_metric("gpu_free_memory_gb", gpu_free_memory, step=epoch)
         mlflow.log_metric("gpu_total_memory_gb", gpu_total_memory, step=epoch)
 
+def log_images_masks_predictions(model, epoch):
+    # Log 3 images and masks to mlflow
+    images, masks = next(iter(train_loader))  # Get first batch
+    images = images.to(DEVICE)
+    predictions = model(images)
+    for i in range(3):
+        image = images[i].cpu().numpy().transpose(1, 2, 0)  # Convert to HWC format
+        image = (image * 255).astype(np.uint8)  # Convert to uint8
+        
+        mask = masks[i].cpu().numpy()
+        mask = (mask > 0).astype(np.uint8) * 255  # Convert to binary mask
+
+        prediction = torch.argmax(predictions[i], dim=0).cpu().numpy()
+        prediction = (prediction > 0).astype(np.uint8) * 255  # Convert to binary mask
+
+        mlflow.log_image(image, f"images/{epoch}/image_{i}.png")
+        mlflow.log_image(mask, f"images/{epoch}/mask_{i}.png")
+        mlflow.log_image(prediction, f"images/{epoch}/prediction_{i}.png")
+
 # -------------------------------
 # Training Loop
 # -------------------------------
 def train():
-    with mlflow.start_run():
+    with mlflow.start_run(log_system_metrics=True):
         log_model_params(model)
         for epoch in range(NUM_EPOCHS):
+            log_images_masks_predictions(model, epoch)
+
             model.train()
             epoch_loss = 0
-
             for images, masks in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
                 images = images.to(DEVICE)
                 masks = masks.to(DEVICE)
@@ -216,18 +237,17 @@ def train():
             avg_loss = epoch_loss / len(train_loader)
 
             log_epoch_metrics(epoch, train_loss, val_loss, val_iou, avg_loss) # Log train epoch metrics (loss, iou)
-            log_system_metrics(epoch)  # Log system metrics
+            # log_system_metrics(epoch)  # Log system metrics
 
             if epoch % 5 == 0:
                 checkpoint_path = f"checkpoint_epoch_{epoch}.pth"
                 torch.save(model.state_dict(), checkpoint_path)
                 mlflow.log_artifact(checkpoint_path)  # Uploads to MLflow run
             
-
-    if SAVE_MODEL:
-        torch.save(model.state_dict(), MODEL_PATH)
-        print(f"Model saved to {MODEL_PATH}")
-        mlflow.pytorch.log_model(model, "model")
+        if SAVE_MODEL:
+            torch.save(model.state_dict(), MODEL_PATH)
+            print(f"Model saved to {MODEL_PATH}")
+            mlflow.pytorch.log_model(model, "model")
 
 # -------------------------------
 # Entry Point
