@@ -4,3 +4,11 @@ data/
 *.tar.gz
 *.pth
 mlruns/
+*.aux
+*.log
+*.out
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.bbl
+_minted/

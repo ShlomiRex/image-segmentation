@@ -17,3 +17,9 @@ print("Path to dataset files:", path)
 ```
 
 Use this path to load the dataset in your code.
+
+## Understanding U-Net Architecture & Code
+
+Further details are on the `explanation.pdf` file.
+
+![](unet.png)
