@@ -12,3 +12,6 @@ mlruns/
 *.synctex.gz
 *.bbl
 _minted/
+*-SAVE-ERROR*
+*.toc
+*.blg
