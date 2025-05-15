@@ -46,11 +46,26 @@ The contracting path captures the context of the input image by applying repeate
 
 
 
-\subsection{Blue arrow: Convolutional Block}
+\subsection{Blue arrow: Convolutional block}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.15\textwidth]{latex/blue_arrow.png}
+    \begin{tikzpicture}
+        \node[anchor=south west, inner sep=0] (img) at (0,0) {
+            \includegraphics[width=0.15\textwidth]{latex/blue_arrow.png}
+        };
+
+        \begin{scope}[x={(img.south east)}, y={(img.north west)}]
+            \draw[red, thick] (0.55,0.0) rectangle (0.75, 0.95);
+            \node[text opacity=1, text=red] at (0.55, 1.0) {Conv 1 + ReLU};
+
+            \draw[blue, thick] (0.75,0.0) rectangle (0.95, 0.95);
+            \node[text opacity=1, text=blue] at (0.95, -0.05) {Conv 2 + ReLU};
+
+            \draw[black, thick] (0.0,-0.01) rectangle (1.0, 0.96);
+            \node[text opacity=1.0] at (1.6, 0.5) {DoubleConvolution};
+        \end{scope}
+    \end{tikzpicture}
     \caption{Double Convolutional Block}
 \end{figure}
 
@@ -85,7 +100,16 @@ Explanation of the code:
 
 
 
+
+
 \subsection{Red arrow: Maxpooling}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.25\textwidth]{latex/red_arrow.png}
+    \caption{Downsampling Block}
+    \label{fig:downsamlping_block}
+\end{figure}
 
 The downsampling operation can be implemented as:
 
@@ -103,13 +127,14 @@ class DownSampling(nn.Module):
         return down, pool
 \end{minted}
 
-% TODO: Explain why we have two outputs
 Explanation of the code:
 
 \begin{itemize}
-    \item The \texttt{down} feature map is retained for later use in skip connections.
-    \item The \texttt{pool} is forwarded deeper into the network.
+    \item We apply a single \texttt{DoubleConvolution} block to the input, and then we apply the maxpooling operation on the result, which is shown in figure \ref{fig:downsamlping_block}.
+    \item We return both the output of the \texttt{DoubleConvolution} block which will be used for the skip connection and the output of the maxpooling operation which will be used for the next downsampling block.
 \end{itemize}
+
+
 
 
 
@@ -123,51 +148,112 @@ Explanation of the code:
 
 \section{Bottleneck}
 
-At the bottom of the U, the network contains two $3 \times 3$ convolutions without pooling. This stage learns the most abstract features before upsampling begins.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{latex/bottle.png}
+    \caption{Bottleneck Block}
+    \label{fig:bottleneck}
+\end{figure}
 
-\section*{3. Expansive Path (Upsampling)}
+The bottleneck block is also \texttt{DoubleConvolution}, without maxpooling. This stage learns the most abstract features before upsampling begins.
 
-The expansive path reconstructs the segmentation map through upsampling and concatenation with features from the contracting path. Each step includes:
-\begin{itemize}
-    \item A $2 \times 2$ transposed convolution for upsampling.
-    \item Concatenation with the corresponding feature map from the contracting path.
-    \item Two $3 \times 3$ convolutions (with ReLU activation).
-\end{itemize}
 
-The implementation of an upsampling block:
 
-\begin{verbatim}
+
+
+
+
+
+\section{Expansive Path (Upsampling)}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{latex/upsampling2.png}
+    \caption{UpSampling Block}
+    \label{fig:upsampling}
+\end{figure}
+
+The \texttt{UpSampling} block can be implemented as:
+
+\begin{minted}[fontsize=\small, linenos]{python}
 class UpSampling(nn.Module):
     def __init__(self, in_channels, out_channels):
-        self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=2, stride=2)
         self.conv = DoubleConvolution(in_channels, out_channels)
-
+    
     def forward(self, x1, x2):
         x1 = self.up(x1)
         x = torch.cat((x1, x2), dim=1)
         return self.conv(x)
-\end{verbatim}
+\end{minted}
 
-\section*{4. Skip Connections}
+Explanation of the code:
 
-Skip connections play a critical role in U-Net. They allow high-resolution features from the encoder to be reused in the decoder, which helps retain fine-grained spatial information lost during pooling. They are implemented by concatenating encoder features with the decoder's upsampled output:
+\begin{itemize}
+    \item The \texttt{ConvTranspose2d} layer is used for upsampling. Its a $2\times 2$ deconvolution (reverse of regular convolution - it increases spatial resolution).
+    \item The output of the \texttt{ConvTranspose2d} layer is concatenated with the corresponding feature map from the contracting path (the skip connection). i.e. this is the output \texttt{conv} of the \texttt{DownSampling} block.
+    \item Finally, \texttt{DoubleConvolution}
+\end{itemize}
 
-\begin{equation}
-x = \text{Concat}(\text{Upsample}(x_{\text{decoder}}), x_{\text{encoder}})
-\end{equation}
 
-This helps the network make better predictions, especially near object boundaries.
 
-\section*{5. Final Output}
 
-The final layer is typically a $1 \times 1$ convolution to reduce the number of feature maps to the number of classes in the segmentation task.
 
-\begin{verbatim}
-self.out = nn.Conv2d(64, num_classes, kernel_size=1)
-\end{verbatim}
 
-\section*{Conclusion}
 
-U-Net's strength lies in its symmetric structure and use of skip connections. This design enables the network to combine both high-level abstract features and low-level spatial information, making it highly effective for segmentation tasks with limited data.
+
+\section{U-Net: Skip connections \& Final layer}
+
+The skip connections are implemented by concatenating the feature maps from the contracting path with the corresponding feature maps in the expansive path. This allows the network to retain spatial information lost during downsampling. It is not \texttt{ResidualBlock} connections, where we add the feature maps: instead we concat them.
+
+Here is the final U-Net coming together:
+
+\begin{minted}[fontsize=\small, linenos]{python}
+class UNet(nn.Module):
+    def __init__(self, in_channels, num_classes):
+        super().__init__()
+        self.dconv1 = DownSampling(in_channels, 64)
+        self.dconv2 = DownSampling(64, 128)
+        self.dconv3 = DownSampling(128, 256)
+        self.dconv4 = DownSampling(256, 512)
+
+        self.bottle_neck = DoubleConvolution(512, 1024)
+
+        self.uconv1 = UpSampling(1024, 512)
+        self.uconv2 = UpSampling(512, 256)
+        self.uconv3 = UpSampling(256, 128)
+        self.uconv4 = UpSampling(128, 64)
+
+        self.out = nn.Conv2d(64, num_classes, kernel_size=1)
+
+    def forward(self, x):
+        d1,p1 = self.dconv1(x)
+        d2,p2 = self.dconv2(p1)
+        d3,p3 = self.dconv3(p2)
+        d4,p4 = self.dconv4(p3)
+
+        b = self.bottle_neck(p4)
+        
+        u1 = self.uconv1(b, d4)
+        u2 = self.uconv2(u1, d3)
+        u3 = self.uconv3(u2, d2)
+        u4 = self.uconv4(u3, d1)
+
+        out = self.out(u4)
+        return out
+\end{minted}
+
+Explanation of the code:
+
+\begin{itemize}
+    \item Line 16: the final output layer is a $1 \times 1$ convolution that reduces the number of feature maps to the number of classes in the segmentation task.
+    \item Line 19-22: the downsampling blocks. We get dX and pX where dX is the output of the \texttt{DoubleConvolution} block and pX is the output of the maxpooling operation. The pX is used for the next downsampling block and dX is used for the skip connection (lines 26-29).
+    \item Line 24: the bottleneck block.
+    \item Line 26-29: the upsampling blocks. We get uX which is the output of the \texttt{UpSampling} block. The input is the dX which we talked about before (the skip connection), and the output is the uX which is used for the next upsampling block.
+    \item Line 31: the final output layer. The output is the number of classes in the segmentation task.
+\end{itemize}
+
+
 
 \end{document}

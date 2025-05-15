@@ -5,7 +5,6 @@ import torch.nn as nn
 From the paper:
 "It consists of the repeated application of two 3x3 convolutions (unpadded convolutions), each followed by a rectified linear unit (ReLU) [i.e. DoubleConvolution module] and a 2x2 max pooling operation with stride 2 for downsampling [i.e. DownSampling module]."
 """
-
 class DoubleConvolution(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -25,12 +24,10 @@ class DownSampling(nn.Module):
         self.conv = DoubleConvolution(in_channels, out_channels)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
     
-    # TODO: Explain why we output two values
     def forward(self, x):
         down = self.conv(x)
         pool = self.pool(down)
 
-        # Return both as we will use them later
         return down, pool
 
 """
@@ -43,7 +40,6 @@ class UpSampling(nn.Module):
         self.up = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=2, stride=2)
         self.conv = DoubleConvolution(in_channels, out_channels)
     
-    # TODO: Explain why we take two inputs
     def forward(self, x1, x2):
         x1 = self.up(x1)
         x = torch.cat((x1, x2), dim=1)
@@ -73,6 +69,7 @@ class UNet(nn.Module):
         d4,p4 = self.dconv4(p3)
 
         b = self.bottle_neck(p4)
+
         u1 = self.uconv1(b, d4)
         u2 = self.uconv2(u1, d3)
         u3 = self.uconv3(u2, d2)
