@@ -15,17 +15,24 @@ from PIL import Image
 import mlflow
 import mlflow.pytorch
 import psutil
+import time
+import matplotlib.pyplot as plt
+from io import BytesIO
+from torchvision.transforms.functional import to_pil_image
+
 
 # -------------------------------
 # Configuration
 # -------------------------------
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 NUM_EPOCHS = 20
 LR = 1e-4
 IMG_SIZE = (128, 128)
 SAVE_MODEL = True
 MODEL_PATH = "unet_oxford_pet.pth"
+TRAIN_LOADER_NUM_WORKERS = 0
+VAL_LOADER_NUM_WORKERS = 0
 
 print(f"Using device: {DEVICE}")
 
@@ -98,8 +105,8 @@ optimizer = optim.Adam(model.parameters(), lr=LR)
 train_dataset = OxfordPetSegDataset(root="./data", split="train", transform=PetSegTransform())
 val_dataset   = OxfordPetSegDataset(root="./data", split="val", transform=PetSegTransform())
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=TRAIN_LOADER_NUM_WORKERS)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=VAL_LOADER_NUM_WORKERS)
 
 # -------------------------------
 # Mlflow metrics
@@ -175,24 +182,61 @@ def log_system_metrics(epoch):
         mlflow.log_metric("gpu_free_memory_gb", gpu_free_memory, step=epoch)
         mlflow.log_metric("gpu_total_memory_gb", gpu_total_memory, step=epoch)
 
-def log_images_masks_predictions(model, epoch):
-    # Log 3 images and masks to mlflow
+def log_images_masks_predictions(model, train_loader, epoch, device):
+    model.eval()
     images, masks = next(iter(train_loader))  # Get first batch
-    images = images.to(DEVICE)
-    predictions = model(images)
+    images = images.to(device)
+    
+    with torch.no_grad():
+        predictions = model(images)
+
+    fig, axes = plt.subplots(3, 3, figsize=(9, 9))
+    column_titles = ["Image", "Mask", "Prediction"]
+
     for i in range(3):
-        image = images[i].cpu().numpy().transpose(1, 2, 0)  # Convert to HWC format
-        image = (image * 255).astype(np.uint8)  # Convert to uint8
-        
+        image = images[i].cpu().numpy().transpose(1, 2, 0)
+        image = (image * 255).astype(np.uint8)
+
         mask = masks[i].cpu().numpy()
-        mask = (mask > 0).astype(np.uint8) * 255  # Convert to binary mask
+        mask = (mask > 0).astype(np.uint8) * 255
 
         prediction = torch.argmax(predictions[i], dim=0).cpu().numpy()
-        prediction = (prediction > 0).astype(np.uint8) * 255  # Convert to binary mask
+        prediction = (prediction > 0).astype(np.uint8) * 255
 
-        mlflow.log_image(image, f"images/{epoch}/image_{i}.png")
-        mlflow.log_image(mask, f"images/{epoch}/mask_{i}.png")
-        mlflow.log_image(prediction, f"images/{epoch}/prediction_{i}.png")
+        axes[i, 0].imshow(image)
+        axes[i, 0].axis("off")
+        if i == 0:
+            axes[i, 0].set_title(column_titles[0])
+
+        axes[i, 1].imshow(mask, cmap="gray")
+        axes[i, 1].axis("off")
+        if i == 0:
+            axes[i, 1].set_title(column_titles[1])
+
+        axes[i, 2].imshow(prediction, cmap="gray")
+        axes[i, 2].axis("off")
+        if i == 0:
+            axes[i, 2].set_title(column_titles[2])
+
+    plt.tight_layout()
+
+    path = f"combined_grid.png"
+    fig.savefig(path)
+    # Load the image as numpy array
+    image = Image.open(path)
+    image = np.array(image)
+    # Convert to RGB
+    image = image[:, :, :3]
+    # Convert to uint8
+    image = image.astype(np.uint8)
+
+    mlflow.log_image(image, f"images/{epoch}_prediction.png")
+    
+    plt.close(fig)
+
+def log_other_params():
+    mlflow.log_param("TRAIN_LOADER_NUM_WORKERS", TRAIN_LOADER_NUM_WORKERS)
+    mlflow.log_param("VAL_LOADER_NUM_WORKERS", VAL_LOADER_NUM_WORKERS)
 
 # -------------------------------
 # Training Loop
@@ -200,11 +244,16 @@ def log_images_masks_predictions(model, epoch):
 def train():
     with mlflow.start_run(log_system_metrics=True):
         log_model_params(model)
+        log_other_params()
         for epoch in range(NUM_EPOCHS):
-            log_images_masks_predictions(model, epoch)
+            log_images_masks_predictions(model, train_loader, epoch, DEVICE)
 
             model.train()
             epoch_loss = 0
+
+            total_backward_pass_time = 0
+            total_optimizer_step_time = 0
+            
             for images, masks in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
                 images = images.to(DEVICE)
                 masks = masks.to(DEVICE)
@@ -212,12 +261,23 @@ def train():
                 optimizer.zero_grad()
                 outputs = model(images)
                 loss = criterion(outputs, masks)
-                loss.backward()
-                optimizer.step()
 
+                start = time.time()
+                loss.backward()
+                total_backward_pass_time += time.time() - start
+
+                start = time.time()
+                optimizer.step()
                 epoch_loss += loss.item()
-            
+                total_optimizer_step_time += time.time() - start
+
+
+            print(f"Finished epoch {epoch+1} with loss: {epoch_loss/len(train_loader):.4f}")
             train_loss = epoch_loss / len(train_loader)
+
+            # Log time metrics for backward pass and optimizer step
+            mlflow.log_metric("time/avg_backward_pass", total_backward_pass_time / len(train_loader), step=epoch)
+            mlflow.log_metric("time/avg_optimizer_step", total_optimizer_step_time / len(train_loader), step=epoch)
 
             # Validation loop
             model.eval()
