@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 from torchvision.transforms.functional import to_pil_image
 from torch.utils.data import ConcatDataset
+from pycocotools.coco import COCO
+from pycocotools import mask as coco_mask
 
 
 # -------------------------------
@@ -46,6 +48,12 @@ mlflow.enable_system_metrics_logging()
 
 # Joint transform for image + mask
 class CommonTransform:
+    """
+    invert: invert the mask? black to white and vice versa
+    """
+    def __init__(self, invert=False):
+        self.invert = invert
+    
     def __call__(self, image, mask):
         # Resize
         image = TF.resize(image, IMG_SIZE)
@@ -56,7 +64,10 @@ class CommonTransform:
         mask = torch.as_tensor(np.array(mask), dtype=torch.long)
 
         # Convert to binary mask: pet = 1, background = 0
-        mask = (mask > 1).long()
+        if not self.invert:
+            mask = (mask > 1).long()
+        else:
+            mask = (mask == 1).long()
 
         return image, mask
 
@@ -107,6 +118,45 @@ class VOCSegDataset(torch.utils.data.Dataset):
             img, mask = self.transform(img, mask)
         return img, mask
 
+class CocoSegDataset(torch.utils.data.Dataset):
+    def __init__(self, root, ann_file, transform=None):
+        self.coco = COCO(ann_file)
+        self.root = root
+        self.transform = transform
+        self.ids = list(self.coco.imgs.keys())
+
+    def __getitem__(self, index):
+        coco = self.coco
+        img_id = self.ids[index]
+        ann_ids = coco.getAnnIds(imgIds=img_id)
+        anns = coco.loadAnns(ann_ids)
+
+        # Load image
+        path = coco.loadImgs(img_id)[0]['file_name']
+        img = Image.open(os.path.join(self.root, path)).convert("RGB")
+
+        # Create segmentation mask
+        mask = np.zeros((img.height, img.width), dtype=np.uint8)
+        for ann in anns:
+            if ann.get("iscrowd", 0):
+                rle = coco_mask.frPyObjects(ann['segmentation'], img.height, img.width)
+                m = coco_mask.decode(rle)
+                m = m if len(m.shape) == 2 else m.sum(axis=2)
+            else:
+                m = coco.annToMask(ann)
+            mask[m > 0] = ann['category_id']
+
+        mask = Image.fromarray(mask)
+
+        if self.transform:
+            img = self.transform(img)
+            mask = torch.from_numpy(np.array(mask)).long()
+
+        return img, mask
+
+    def __len__(self):
+        return len(self.ids)
+
 # -------------------------------
 # Model, Loss, Optimizer
 # -------------------------------
@@ -118,10 +168,21 @@ optimizer = optim.Adam(model.parameters(), lr=LR)
 # Datasets, DataLoader
 # -------------------------------
 
+# Plot 5 masks from each dataset
+def plot_masks(dataset, title):
+    fig, axes = plt.subplots(1, 5, figsize=(15, 3))
+    for i in range(5):
+        img, mask = dataset[i]
+        axes[i].imshow(mask.squeeze(0).cpu().numpy(), cmap="gray")
+        axes[i].axis("off")
+        axes[i].set_title(f"{title} Mask {i+1}")
+    plt.show()
+
 # Oxford IIT Pet Dataset
 print("Loading Oxford IIT Pet Dataset...")
-dataset_train_oxford_iit_pet = OxfordPetSegDataset(root="./data", split="train", transform=CommonTransform())
-dataset_val_oxford_iit_pet   = OxfordPetSegDataset(root="./data", split="val", transform=CommonTransform())
+dataset_train_oxford_iit_pet = OxfordPetSegDataset(root="./data", split="train", transform=CommonTransform(invert=True))
+dataset_val_oxford_iit_pet   = OxfordPetSegDataset(root="./data", split="val", transform=CommonTransform(invert=True))
+# plot_masks(dataset_train_oxford_iit_pet, "Oxford IIT Pet")
 
 # VOC Segmentation Dataset
 print("Loading VOC Segmentation Dataset...")
@@ -284,6 +345,17 @@ def train():
             for images, masks in tqdm(train_loader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}"):
                 images = images.to(DEVICE)
                 masks = masks.to(DEVICE)
+
+                # Plot masks
+                fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+                axes[0].imshow(images[0].cpu().numpy().transpose(1, 2, 0))
+                axes[0].axis("off")
+                axes[0].set_title("Image")
+                axes[1].imshow(masks[0].cpu().numpy(), cmap="gray")
+                axes[1].axis("off")
+                axes[1].set_title("Mask")
+                plt.tight_layout()
+                plt.show()
 
                 optimizer.zero_grad()
                 outputs = model(images)

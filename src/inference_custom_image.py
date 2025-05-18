@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 # -------------------------------
 # Configuration
 # -------------------------------
-MODEL_PATH = "unet_oxford_pet.pth"
+MODEL_PATH = "final_unet_model.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 IMG_SIZE = (128, 128)
 NUM_CLASSES = 2
@@ -17,6 +17,7 @@ print(f"Using device: {DEVICE}")
 # -------------------------------
 # Load model
 # -------------------------------
+printf("Loading model from: {MODEL_PATH}")
 model = UNet(in_channels=3, num_classes=NUM_CLASSES).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
@@ -25,7 +26,8 @@ print("Model loaded successfully!")
 # -------------------------------
 # Load and preprocess image
 # -------------------------------
-image_to_segment = "data/custom_images/car.png"
+image_to_segment = "data/custom_images/cityscape.png"
+print(f"Loading image: {image_to_segment}")
 image = Image.open(image_to_segment).convert("RGB").resize(IMG_SIZE)
 image_np = np.array(image) / 255.0  # Normalize to [0, 1]
 image_tensor = torch.tensor(image_np).permute(2, 0, 1).unsqueeze(0).float().to(DEVICE)
