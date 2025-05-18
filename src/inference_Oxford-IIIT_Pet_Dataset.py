@@ -11,11 +11,13 @@ from unet import UNet  # Import your U-Net model
 # -------------------------------
 # Configuration
 # -------------------------------
-MODEL_PATH = "unet_oxford_pet1.pth"
+MODEL_PATH = "unet_oxford_pet.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 IMG_SIZE = (128, 128)
 NUM_CLASSES = 2
 NUM_SAMPLES = 5
+
+print(f"Using device: {DEVICE}")
 
 # -------------------------------
 # Load model
