@@ -4,7 +4,7 @@ My implementation of the [U-Net paper](https://arxiv.org/abs/1505.04597) using P
 
 Task: segment images.
 
-I used a [YouTube tutorial](https://www.youtube.com/watch?v=HS3Q_90hnDg) for guidance.
+I used a [YouTube tutorial](https://www.youtube.com/watch?v=HS3Q_90hnDg) for guidance and its [github repo](https://github.com/uygarkurt/UNet-PyTorch).
 
 ## Dataset
 
